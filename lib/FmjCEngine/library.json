@@ -1,0 +1,9 @@
+{
+  "name": "FmjCEngine",
+  "version": "0.1.0",
+  "description": "Portable Cardputer adaptation of the GPL-2.0 FMJ C engine",
+  "license": "GPL-2.0-only",
+  "build": {
+    "flags": "-I src/fmj_c_engine -fno-strict-aliasing -fexec-charset=GBK -Wno-unused-label -Wno-pointer-sign"
+  }
+}

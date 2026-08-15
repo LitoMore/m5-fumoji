@@ -1,0 +1,10 @@
+.pio/
+.vscode/
+.DS_Store
+data/*.LIB
+data/ASC16
+data/HZK16
+*.bin
+dist/
+__pycache__/
+*.pyc

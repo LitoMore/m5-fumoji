@@ -1,0 +1,9 @@
+{
+  "name": "FmjCore",
+  "version": "0.1.0",
+  "description": "Platform-independent core for the Cardputer FMJ firmware",
+  "license": "GPL-2.0-only",
+  "build": {
+    "flags": "-I src"
+  }
+}
