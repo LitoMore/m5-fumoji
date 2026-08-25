@@ -184,13 +184,13 @@ void _00200942(UINT8 _17CF)
     {
         for (UINT8 _17CE = 0x00; _17CE<0x03; _17CE++)
         {
-            // 角色类型
-            if (MCU_memory[0x1988+_17CE*0x0019] == 0x00)
+            // 角色资源ID
+            if (MCU_memory[0x1988+_17CE*0x0019+0x01] == 0x00)
             {
                 continue;
             }
-            //      角色类型
-            __8DDC(MCU_memory[0x1988+_17CE*0x0019]);
+            //      角色资源ID
+            __8DDC(MCU_memory[0x1988+_17CE*0x0019+0x01]);
         }
     }
     if (_17CF&0x04)
@@ -4544,8 +4544,7 @@ void _0020F876()
     do
     {
         _8886:
-        _17CB.type = DICT_WM_KEY;
-        _17CB.param = SysGetKey();
+        GuiGetMsg(&_17CB);
         if (GuiTranslateMsg(&_17CB) && _17CB.type == DICT_WM_CHAR_FUN
          && (_17CB.param == CHAR_ENTER || _17CB.param == CHAR_EXIT))
         {
@@ -12509,7 +12508,7 @@ void _0022CFD6(UINT8 _17CF)
 {
     const UINT8 _8AEC[] = "修行提升";
     UINT8* _17CD;
-    UINT8 _17B9[0x12];
+    UINT8 _17B9[0x40];
     UINT8 _17B8;
     UINT8 _17B6[2];
     if (MCU_memory[0x1935])
@@ -12522,9 +12521,12 @@ void _0022CFD6(UINT8 _17CF)
     _17B8 = (UINT8)strlen(MCU_memory + *(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x0F));
     // 指向角色姓名
     _17CD = MCU_memory + *(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x0F);
+    if (_17B8 > sizeof(_17B9) - sizeof(_8AEC))
+    {
+        _17B8 = sizeof(_17B9) - sizeof(_8AEC);
+    }
     _SysMemcpy(_17B9, _17CD, _17B8);
-    _17CD += _17B8;
-    _SysMemcpy(_17CD, _8AEC, 0x0009);
+    _SysMemcpy(_17B9 + _17B8, _8AEC, sizeof(_8AEC));
     _17B8 = (UINT8)strlen(_17B9);
     __8E75(0x02, _17B8, _17B6);
     SysPrintString(_17B6[0], _17B6[1], _17B9);
@@ -12701,13 +12703,11 @@ UINT8 _0022D9E8(UINT8 _17CF, UINT8* _17D0)
     *(UINT16*)(MCU_memory+*(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x11)+0x0014) = *(UINT16*)(_17A8 + 0x0E);
     //      hpMax
     _17C2 = *(UINT16*)(MCU_memory + *(UINT16*)(MCU_memory + _17CF * 0x0019 + 0x1988 + 0x11) + 0x06) -*(UINT16*)(_17D0);
-    _17C2 = _17C4%_17C2;
-    _17C8 = _17C2>>0x0003;
+    _17C8 = _17C2 == 0x0000 ? 0x00 : (UINT8)((_17C4%_17C2)>>0x0003);
     *(UINT16*)(MCU_memory+*(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x11)+0x0006) = *(UINT16*)(MCU_memory + *(UINT16*)(MCU_memory + _17CF * 0x0019 + 0x1988 + 0x11) + 0x06) + _17C8;
     //      mpMax
     _17C2 = *(UINT16*)(MCU_memory + *(UINT16*)(MCU_memory + _17CF * 0x0019 + 0x1988 + 0x11) + 0x0A) -*(UINT16*)(_17D0+0x04);
-    _17C2 = _17C4%_17C2;
-    _17C8 = _17C2>>0x0003;
+    _17C8 = _17C2 == 0x0000 ? 0x00 : (UINT8)((_17C4%_17C2)>>0x0003);
     *(UINT16*)(MCU_memory+*(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x11)+0x000A) = *(UINT16*)(MCU_memory + *(UINT16*)(MCU_memory + _17CF * 0x0019 + 0x1988 + 0x11) + 0x0A) + _17C8;
     // hp = hpMax
     *(UINT16*)(MCU_memory+*(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x11)+0x0008) = *(UINT16*)(MCU_memory + *(UINT16*)(MCU_memory + _17CF * 0x0019 + 0x1988 + 0x11) + 0x06);
@@ -12844,8 +12844,10 @@ void _0022F05D(UINT8 _17CF)
 {
     UINT8 _17BA[20];
     UINT8 _17B9;
+    UINT8* _17B8;
+    UINT8* _17B7;
     //                          角色资源ID
-    __8F0A(DAT_MAGICLINK, 0x02, MCU_memory[_17CF*0x0019+0x1988+0x01]);
+    _17B8 = __8F0A(DAT_MAGICLINK, 0x02, MCU_memory[_17CF*0x0019+0x1988+0x01]);
     if (MCU_memory[0x1935])
     {
         _80CF:
@@ -12853,8 +12855,15 @@ void _0022F05D(UINT8 _17CF)
         return;
     }
 _80D7:
+    _17B7 = MCU_memory + *(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x11);
+    if (_17B7[0x00] == 0xF3 || _17B7[0x00] >= _17B8[0x02])
+    {
+        _17B7[0x00] = 0xF3;
+        *(UINT16*)(_17B7 + 0x14) = 0x0000;
+        return;
+    }
     // 升级经验
-    if (*(UINT16*)(MCU_memory+*(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x11)+0x14) == 0x0000)
+    if (*(UINT16*)(_17B7 + 0x14) == 0x0000)
     {
         _812D:
         return;
@@ -16516,7 +16525,10 @@ UINT8 _0023ECA9(UINT8 _17CF, UINT16* _17D0, UINT16* _17D2, UINT16* _17D4)
         _17C9 += MCU_memory[_17C1+0x17]*(_17C9 >> 0x0006);
         //       敌人角色灵力
         _17C9 -= MCU_memory[_17BF+0x02]*(_17C9 >> 0x0006);
-        _17C9 += (_17C7%_17C9)>>0x0004;
+        if (_17C9 != 0x0000)
+        {
+            _17C9 += (_17C7%_17C9)>>0x0004;
+        }
         // 如果魔法伤害>敌人角色hp
         if (_17C9 > *(UINT16*)(MCU_memory+_17BF+0x08))
         {
@@ -16535,7 +16547,10 @@ UINT8 _0023ECA9(UINT8 _17CF, UINT16* _17D0, UINT16* _17D2, UINT16* _17D4)
         _17C9 += MCU_memory[_17C1+0x17]* _17C9 >> 0x0006;
         //       敌人角色灵力
         _17C9 -= MCU_memory[_17BF+0x02]* _17C9 >> 0x0006;
-        _17C9 += (_17C7%_17C9)>>0x0004;
+        if (_17C9 != 0x0000)
+        {
+            _17C9 += (_17C7%_17C9)>>0x0004;
+        }
         //          敌人角色mp
         if (_17C9 > *(UINT16*)(MCU_memory+_17BF+0x0C))
         {
@@ -17379,7 +17394,10 @@ _74EA:
         _17C9 += MCU_memory[_17BF+0x02]*(_17C9 >> 0x0006);
         //       灵力
         _17C9 -= MCU_memory[_17C1+0x17]*(_17C9 >> 0x0006);
-        _17C9 += (_17C7%_17C9)>>0x0004;
+        if (_17C9 != 0x0000)
+        {
+            _17C9 += (_17C7%_17C9)>>0x0004;
+        }
         if (MCU_memory[*(UINT16*)(MCU_memory+(_17CC<<1)+0x181E)] == 0x05 || MCU_memory[_17CC+0x1916])
         {
             _7A69:
@@ -17403,7 +17421,10 @@ _74EA:
         _17C9 -= MCU_memory[_17BF+0x02]*(_17C9 >> 0x0006);
         //       灵力
         _17C9 += MCU_memory[_17C1+0x17]*(_17C9 >> 0x0006);
-        _17C9 += (_17C7%_17C9)>>0x0004;
+        if (_17C9 != 0x0000)
+        {
+            _17C9 += (_17C7%_17C9)>>0x0004;
+        }
         //          mp
         if (_17C9 > *(UINT16*)(MCU_memory+_17C1+0x0C))
         {
