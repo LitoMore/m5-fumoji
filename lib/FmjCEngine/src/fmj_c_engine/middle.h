@@ -58,6 +58,16 @@ UINT8 SysGetKeySound(void);
 UINT8 SysGetKey(void);
 void SysPlayMelody(UINT8 melody);
 void SysStopMelody(void);
+void FmjEngineNotifyWideMapBegin(void);
+void FmjEngineNotifyWideMapReady(void);
+void FmjEngineNotifyWideMapEnd(void);
+void FmjEngineNotifyBattleBegin(void);
+void FmjEngineNotifyBattleBackgroundReady(void);
+void FmjEngineNotifyBattleEnd(void);
+void FmjEngineTrackTransparentPicture(UINT8 x, UINT8 y, UINT8 width,
+                                      UINT8 height, const UINT8* picture);
+void FmjEngineExcludeBattleOverlayRect(UINT8 x1, UINT8 y1, UINT8 x2,
+                                       UINT8 y2);
 void SysMemInit(UINT16 start, UINT16 length);
 UINT8* SysMemAllocate(UINT16 length);
 UINT8 SysMemFree(UINT8* pointer);

@@ -27,6 +27,58 @@ static UINT32 timer_due_ms = 0;
 static UINT8 key_sound = 0;
 static UINT8 running = 0;
 static UINT8 stop_requested = 0;
+static UINT8 battle_active = 0;
+static UINT8 battle_overlay_tracking = 0;
+static UINT8 battle_overlay_mask[FMJ_ENGINE_SCREEN_BYTES];
+static UINT8 battle_snapshot_mask[FMJ_ENGINE_SCREEN_BYTES];
+static UINT8 battle_snapshot_mask_valid = 0;
+static UINT8 wide_map_overlay_tracking = 0;
+static UINT8 wide_map_overlay_mask[FMJ_ENGINE_SCREEN_BYTES];
+static UINT8 wide_map_snapshot_mask[FMJ_ENGINE_SCREEN_BYTES];
+static UINT8 wide_map_snapshot_mask_valid = 0;
+
+enum { BATTLE_MASK_SAVE_CAPACITY = 4 };
+
+typedef struct BattleMaskSave {
+  UINT8* screen_buffer;
+  UINT8 first_byte;
+  UINT8 last_byte;
+  UINT8 y1;
+  UINT8 y2;
+  UINT16 length;
+  UINT8 data[FMJ_ENGINE_SCREEN_BYTES];
+  UINT8 wide_map_data[FMJ_ENGINE_SCREEN_BYTES];
+} BattleMaskSave;
+
+static BattleMaskSave battle_mask_saves[BATTLE_MASK_SAVE_CAPACITY];
+static UINT8 battle_mask_save_cursor = 0;
+
+static void clear_battle_mask_saves(void) {
+  memset(battle_mask_saves, 0, sizeof(battle_mask_saves));
+  battle_mask_save_cursor = 0;
+}
+
+static void track_battle_pixel(UINT8 x, UINT8 y) {
+  UINT8 mask;
+  UINT16 offset;
+  if ((!battle_overlay_tracking && !wide_map_overlay_tracking) ||
+      x >= FMJ_ENGINE_SCREEN_WIDTH || y >= FMJ_ENGINE_SCREEN_HEIGHT) {
+    return;
+  }
+  offset = (UINT16)y * 20U + x / 8U;
+  mask = (UINT8)(0x80U >> (x & 7U));
+  if (battle_overlay_tracking) battle_overlay_mask[offset] |= mask;
+  if (wide_map_overlay_tracking) wide_map_overlay_mask[offset] |= mask;
+}
+
+static UINT8 is_battle_draw_buffer(const UINT8* screen) {
+  if ((!battle_overlay_tracking && !wide_map_overlay_tracking) ||
+      screen == NULL) {
+    return 0;
+  }
+  return screen == MCU_memory + 0x400 ||
+         screen == MCU_memory + *(UINT16*)(MCU_memory + 0x1936);
+}
 
 static UINT32 host_millis(void) {
   return host.millis != NULL ? host.millis(host.context) : 0;
@@ -38,6 +90,13 @@ static void host_yield(void) {
 
 static void screen_changed(void) {
   if (host.screen_changed != NULL) host.screen_changed(host.context);
+}
+
+static void screen_flush(void) {
+  if (host.screen_flush != NULL)
+    host.screen_flush(host.context);
+  else
+    screen_changed();
 }
 
 static UINT8 in_screen(UINT8 x, UINT8 y) {
@@ -80,6 +139,16 @@ UINT8 FmjEnginePrepare(void) {
   timer_period_ms = 0;
   timer_due_ms = 0;
   stop_requested = 0;
+  battle_active = 0;
+  battle_overlay_tracking = 0;
+  memset(battle_overlay_mask, 0, sizeof(battle_overlay_mask));
+  memset(battle_snapshot_mask, 0, sizeof(battle_snapshot_mask));
+  battle_snapshot_mask_valid = 0;
+  wide_map_overlay_tracking = 0;
+  memset(wide_map_overlay_mask, 0, sizeof(wide_map_overlay_mask));
+  memset(wide_map_snapshot_mask, 0, sizeof(wide_map_snapshot_mask));
+  wide_map_snapshot_mask_valid = 0;
+  clear_battle_mask_saves();
   return 1;
 }
 
@@ -95,6 +164,162 @@ const UINT8* FmjEngineScreen(void) { return MCU_memory + 0x400; }
 
 UINT8 FmjEngineRunning(void) { return running; }
 
+UINT8 FmjEngineGetWideMapState(FmjEngineWideMapState* state) {
+  UINT8 player_index;
+  UINT16 player;
+  UINT8 index;
+  if (state == NULL) return 0;
+  memset(state, 0, sizeof(*state));
+  if (MCU_memory[0x1935] != 0 || MCU_memory[0x197E] == 0 ||
+      MCU_memory[0x197F] == 0 || MCU_memory[0x1983] == 0 ||
+      MCU_memory[0x1984] == 0) {
+    return 0;
+  }
+
+  state->base_bank = *(UINT16*)(MCU_memory + 0x1931);
+  state->map_width = MCU_memory[0x197E];
+  state->map_height = MCU_memory[0x197F];
+  state->camera_x = MCU_memory[0x197C];
+  state->camera_y = MCU_memory[0x197D];
+  state->tile_width = MCU_memory[0x1983];
+  state->tile_height = MCU_memory[0x1984];
+  state->map_bank = MCU_memory[0x1980];
+  state->map_offset = *(UINT16*)(MCU_memory + 0x1981);
+  state->tile_bank = MCU_memory[0x1985];
+  state->tile_offset = *(UINT16*)(MCU_memory + 0x1986);
+  memcpy(state->overlay_mask, wide_map_overlay_mask,
+         sizeof(state->overlay_mask));
+
+  player_index = MCU_memory[0x1A94];
+  player = (UINT16)(0x1988U + (UINT16)player_index * 0x19U);
+  if (player <= 0xFFE6U && MCU_memory[player + 1U] != 0) {
+    FmjEngineWideActor* actor = &state->actors[state->actor_count++];
+    actor->type = 1;
+    actor->world_x = (UINT8)(state->camera_x + MCU_memory[player + 5U]);
+    actor->world_y = (UINT8)(state->camera_y + MCU_memory[player + 6U]);
+    actor->direction = MCU_memory[player + 2U];
+    actor->step = MCU_memory[player + 3U];
+    actor->image_bank = MCU_memory[player + 0x0AU];
+    actor->image_offset = *(UINT16*)(MCU_memory + player + 0x0BU);
+  }
+
+  for (index = 0; index < 0x28U &&
+                  state->actor_count < FMJ_ENGINE_WIDE_ACTOR_CAPACITY;
+       ++index) {
+    UINT16 actor_address =
+        *(UINT16*)(MCU_memory + 0x19D3U + (UINT16)index * 2U);
+    FmjEngineWideActor* actor;
+    if (actor_address == 0 || actor_address > 0xFFE6U) continue;
+    actor = &state->actors[state->actor_count++];
+    actor->type = MCU_memory[actor_address];
+    actor->world_x = MCU_memory[actor_address + 5U];
+    actor->world_y = MCU_memory[actor_address + 6U];
+    actor->direction = MCU_memory[actor_address + 2U];
+    actor->step = MCU_memory[actor_address + 3U];
+    actor->image_bank = MCU_memory[actor_address + 0x17U];
+    actor->image_offset =
+        *(UINT16*)(MCU_memory + actor_address + 0x18U);
+  }
+  return 1;
+}
+
+UINT8 FmjEngineGetBattleState(FmjEngineBattleState* state) {
+  if (state == NULL || !battle_active) return 0;
+  state->background = MCU_memory[0x18DD];
+  state->top_right = MCU_memory[0x18DE];
+  state->bottom_left = MCU_memory[0x18DF];
+  memcpy(state->overlay_mask, battle_overlay_mask,
+         sizeof(state->overlay_mask));
+  return 1;
+}
+
+void FmjEngineNotifyWideMapBegin(void) {
+  wide_map_overlay_tracking = 0;
+  memset(wide_map_overlay_mask, 0, sizeof(wide_map_overlay_mask));
+  wide_map_snapshot_mask_valid = 0;
+  clear_battle_mask_saves();
+  if (host.wide_map_begin != NULL) host.wide_map_begin(host.context);
+}
+
+void FmjEngineNotifyWideMapReady(void) {
+  memset(wide_map_overlay_mask, 0, sizeof(wide_map_overlay_mask));
+  wide_map_snapshot_mask_valid = 0;
+  clear_battle_mask_saves();
+  wide_map_overlay_tracking = 1;
+  if (host.wide_map_ready != NULL) host.wide_map_ready(host.context);
+}
+
+void FmjEngineNotifyWideMapEnd(void) {
+  wide_map_overlay_tracking = 0;
+  if (host.wide_map_end != NULL) host.wide_map_end(host.context);
+}
+
+void FmjEngineNotifyBattleBegin(void) {
+  battle_active = 1;
+  battle_overlay_tracking = 0;
+  memset(battle_overlay_mask, 0, sizeof(battle_overlay_mask));
+  battle_snapshot_mask_valid = 0;
+  clear_battle_mask_saves();
+  if (host.battle_begin != NULL) host.battle_begin(host.context);
+}
+
+void FmjEngineNotifyBattleBackgroundReady(void) {
+  if (!battle_active) return;
+  memset(battle_overlay_mask, 0, sizeof(battle_overlay_mask));
+  battle_snapshot_mask_valid = 0;
+  clear_battle_mask_saves();
+  battle_overlay_tracking = 1;
+}
+
+void FmjEngineNotifyBattleEnd(void) {
+  battle_active = 0;
+  battle_overlay_tracking = 0;
+  if (host.battle_end != NULL) host.battle_end(host.context);
+}
+
+void FmjEngineTrackTransparentPicture(UINT8 x, UINT8 y, UINT8 width,
+                                      UINT8 height, const UINT8* picture) {
+  UINT16 row_stride;
+  UINT16 iy;
+  UINT16 ix;
+  INT16 destination_y;
+  if ((!battle_overlay_tracking && !wide_map_overlay_tracking) ||
+      picture == NULL || width == 0 || height == 0) {
+    return;
+  }
+  row_stride = (UINT16)(((UINT16)width + 7U) / 8U * 2U);
+  destination_y = (y & 0x80U) != 0U ? (INT16)y - 0x100 : y;
+  for (iy = 0; iy < height; ++iy) {
+    INT16 output_y = destination_y + (INT16)iy;
+    if (output_y < 0 || output_y >= FMJ_ENGINE_SCREEN_HEIGHT) continue;
+    for (ix = 0; ix < width; ++ix) {
+      const UINT8 encoded = picture[iy * row_stride + ix / 4U];
+      const UINT8 pair =
+          (UINT8)((encoded >> (6U - (ix & 3U) * 2U)) & 3U);
+      if ((pair & 2U) == 0U && (UINT16)x + ix < FMJ_ENGINE_SCREEN_WIDTH) {
+        track_battle_pixel((UINT8)((UINT16)x + ix), (UINT8)output_y);
+      }
+    }
+  }
+}
+
+void FmjEngineExcludeBattleOverlayRect(UINT8 x1, UINT8 y1, UINT8 x2,
+                                       UINT8 y2) {
+  UINT16 x;
+  UINT16 y;
+  if (!battle_overlay_tracking || !in_screen(x1, y1) ||
+      !in_screen(x2, y2)) {
+    return;
+  }
+  normalize_rect(&x1, &y1, &x2, &y2);
+  for (y = y1; y <= y2; ++y) {
+    for (x = x1; x <= x2; ++x) {
+      battle_overlay_mask[y * 20U + x / 8U] &=
+          (UINT8)~(0x80U >> (x & 7U));
+    }
+  }
+}
+
 void fillmem(UINT8* destination, UINT16 size, UINT8 value) {
   memset(destination, value, size);
 }
@@ -109,6 +334,7 @@ void SysPutPixel(UINT8 x, UINT8 y, UINT8 value) {
     *pixel |= mask;
   else
     *pixel &= (UINT8)~mask;
+  track_battle_pixel(x, y);
 }
 
 void SysLine(UINT8 x1, UINT8 y1, UINT8 x2, UINT8 y2) {
@@ -174,6 +400,7 @@ void SysLcdReverse(UINT8 x1, UINT8 y1, UINT8 x2, UINT8 y2) {
     for (x = x1; x <= x2; ++x) {
       UINT8* pixel = MCU_memory + 0x400 + 20 * y + x / 8;
       *pixel ^= (UINT8)(0x80U >> (x & 7));
+      track_battle_pixel((UINT8)x, (UINT8)y);
     }
   }
   screen_changed();
@@ -192,6 +419,36 @@ void SysSaveScreen(UINT8 x1, UINT8 y1, UINT8 x2, UINT8 y2, UINT8* buffer) {
     memcpy(buffer + (row - y1) * width,
            MCU_memory + 0x400 + row * 20 + first_byte, width);
   }
+  if (battle_overlay_tracking || wide_map_overlay_tracking) {
+    BattleMaskSave* saved = NULL;
+    UINT8 index;
+    UINT16 offset = 0;
+    for (index = 0; index < BATTLE_MASK_SAVE_CAPACITY; ++index) {
+      if (battle_mask_saves[index].screen_buffer == buffer) {
+        saved = &battle_mask_saves[index];
+        break;
+      }
+    }
+    if (saved == NULL) {
+      saved = &battle_mask_saves[battle_mask_save_cursor];
+      battle_mask_save_cursor =
+          (UINT8)((battle_mask_save_cursor + 1U) % BATTLE_MASK_SAVE_CAPACITY);
+    }
+    saved->screen_buffer = buffer;
+    saved->first_byte = first_byte;
+    saved->last_byte = last_byte;
+    saved->y1 = y1;
+    saved->y2 = y2;
+    for (row = y1; row <= y2; ++row) {
+      UINT16 width = (UINT16)(last_byte - first_byte + 1U);
+      memcpy(saved->data + offset,
+             battle_overlay_mask + row * 20U + first_byte, width);
+      memcpy(saved->wide_map_data + offset,
+             wide_map_overlay_mask + row * 20U + first_byte, width);
+      offset = (UINT16)(offset + width);
+    }
+    saved->length = offset;
+  }
 }
 
 void SysRestoreScreen(UINT8 x1, UINT8 y1, UINT8 x2, UINT8 y2,
@@ -208,6 +465,42 @@ void SysRestoreScreen(UINT8 x1, UINT8 y1, UINT8 x2, UINT8 y2,
     memcpy(MCU_memory + 0x400 + row * 20 + first_byte,
            buffer + (row - y1) * width, width);
   }
+  if (battle_overlay_tracking || wide_map_overlay_tracking) {
+    BattleMaskSave* saved = NULL;
+    UINT8 index;
+    UINT16 offset = 0;
+    for (index = 0; index < BATTLE_MASK_SAVE_CAPACITY; ++index) {
+      if (battle_mask_saves[index].screen_buffer == buffer &&
+          battle_mask_saves[index].first_byte == first_byte &&
+          battle_mask_saves[index].last_byte == last_byte &&
+          battle_mask_saves[index].y1 == y1 &&
+          battle_mask_saves[index].y2 == y2) {
+        saved = &battle_mask_saves[index];
+        break;
+      }
+    }
+    for (row = y1; row <= y2; ++row) {
+      UINT16 width = (UINT16)(last_byte - first_byte + 1U);
+      if (battle_overlay_tracking) {
+        if (saved != NULL && offset + width <= saved->length) {
+          memcpy(battle_overlay_mask + row * 20U + first_byte,
+                 saved->data + offset, width);
+        } else {
+          memset(battle_overlay_mask + row * 20U + first_byte, 0xFF, width);
+        }
+      }
+      if (wide_map_overlay_tracking) {
+        if (saved != NULL && offset + width <= saved->length) {
+          memcpy(wide_map_overlay_mask + row * 20U + first_byte,
+                 saved->wide_map_data + offset, width);
+        } else {
+          memset(wide_map_overlay_mask + row * 20U + first_byte, 0xFF,
+                 width);
+        }
+      }
+      offset = (UINT16)(offset + width);
+    }
+  }
   screen_changed();
 }
 
@@ -220,6 +513,33 @@ void SysPictureDummy(UINT8 x1, UINT8 y1, UINT8 x2, UINT8 y2, UINT8* picture,
       !in_screen(x2, y2))
     return;
   normalize_rect(&x1, &y1, &x2, &y2);
+  {
+    UINT8* draw_buffer = MCU_memory + *(UINT16*)(MCU_memory + 0x1936);
+    UINT8 is_full_frame =
+        x1 == 0 && y1 == 0 && x2 == FMJ_ENGINE_SCREEN_WIDTH - 2 &&
+        y2 == FMJ_ENGINE_SCREEN_HEIGHT - 1;
+    UINT8 is_frame_presentation =
+        is_full_frame && screen == MCU_memory + 0x400 &&
+        picture == draw_buffer;
+    UINT8 is_snapshot_restore = is_full_frame && screen == draw_buffer &&
+                                picture == MCU_memory + 0x4000 &&
+                                (battle_snapshot_mask_valid ||
+                                 wide_map_snapshot_mask_valid);
+    if (is_snapshot_restore) {
+      if (battle_overlay_tracking && battle_snapshot_mask_valid) {
+        memcpy(battle_overlay_mask, battle_snapshot_mask,
+               sizeof(battle_overlay_mask));
+      }
+      if (wide_map_overlay_tracking && wide_map_snapshot_mask_valid) {
+        memcpy(wide_map_overlay_mask, wide_map_snapshot_mask,
+               sizeof(wide_map_overlay_mask));
+      }
+    } else if (is_battle_draw_buffer(screen) && !is_frame_presentation) {
+      for (y = y1; y <= y2; ++y)
+        for (x = x1; x <= x2; ++x)
+          track_battle_pixel((UINT8)x, (UINT8)y);
+    }
+  }
   stride = (UINT16)(((x2 - x1 + 1) + 7) & 0xF8);
   for (y = y1; y <= y2; ++y) {
     for (x = x1; x <= x2; ++x) {
@@ -430,6 +750,33 @@ void SysSrand(PtrRandEnv environment, UINT16 seed, UINT16 maximum) {
 
 void SysMemcpy(UINT8* destination, const UINT8* source, UINT16 length) {
   memcpy(destination, source, length);
+  if ((battle_overlay_tracking || wide_map_overlay_tracking) &&
+      length == FMJ_ENGINE_SCREEN_BYTES) {
+    UINT8* draw_buffer = MCU_memory + *(UINT16*)(MCU_memory + 0x1936);
+    if (destination == MCU_memory + 0x4000 && source == draw_buffer) {
+      if (battle_overlay_tracking) {
+        memcpy(battle_snapshot_mask, battle_overlay_mask,
+               sizeof(battle_snapshot_mask));
+        battle_snapshot_mask_valid = 1;
+      }
+      if (wide_map_overlay_tracking) {
+        memcpy(wide_map_snapshot_mask, wide_map_overlay_mask,
+               sizeof(wide_map_snapshot_mask));
+        wide_map_snapshot_mask_valid = 1;
+      }
+    } else if (battle_overlay_tracking && destination == draw_buffer &&
+               source == MCU_memory + 0x4000 &&
+               battle_snapshot_mask_valid) {
+      memcpy(battle_overlay_mask, battle_snapshot_mask,
+             sizeof(battle_overlay_mask));
+    }
+    if (wide_map_overlay_tracking &&
+        destination == draw_buffer && source == MCU_memory + 0x4000 &&
+        wide_map_snapshot_mask_valid) {
+      memcpy(wide_map_overlay_mask, wide_map_snapshot_mask,
+             sizeof(wide_map_overlay_mask));
+    }
+  }
 }
 
 UINT8 SysMemcmp(UINT8* destination, const UINT8* source, UINT16 length) {
@@ -452,7 +799,7 @@ UINT8 GuiGetMsg(PtrMsg message) {
   PtrMsg queue = (PtrMsg)(MCU_memory + 0x2B0F);
   if (message == NULL) return 0;
   /* Flush direct SysPutPixel users before the engine blocks for an event. */
-  screen_changed();
+  screen_flush();
   for (;;) {
     if (timer_period_ms != 0 &&
         (INT32)(host_millis() - timer_due_ms) >= 0) {

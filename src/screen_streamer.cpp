@@ -25,7 +25,7 @@ void putU32(std::uint8_t* destination, std::uint32_t value) {
 
 }  // namespace
 
-void ScreenStreamer::update(const fmj::MonoCanvas& canvas,
+void ScreenStreamer::update(const WideCanvas& canvas,
                             bool frameChanged) {
   readCommands();
   const auto now = millis();
@@ -66,7 +66,7 @@ void ScreenStreamer::handleCommand() {
     enabled_ = true;
     pendingFrame_ = true;
     lastClientMs_ = now;
-    Serial.println("FMJSTREAM READY 160 96 1");
+    Serial.println("FMJSTREAM READY 240 135 1");
   } else if (std::strcmp(command_.data(), "FMJSTREAM PING") == 0) {
     if (enabled_) lastClientMs_ = now;
   } else if (std::strcmp(command_.data(), "FMJSTREAM OFF") == 0) {
@@ -76,16 +76,16 @@ void ScreenStreamer::handleCommand() {
   }
 }
 
-void ScreenStreamer::sendFrame(const fmj::MonoCanvas& canvas) {
+void ScreenStreamer::sendFrame(const WideCanvas& canvas) {
   std::array<std::uint8_t, kHeaderSize> header{};
   std::memcpy(header.data(), kMagic, sizeof(kMagic));
   header[4] = kProtocolVersion;
   header[5] = 0;
   putU16(header.data() + 6, sequence_++);
   putU16(header.data() + 8,
-         static_cast<std::uint16_t>(fmj::MonoCanvas::kBufferSize));
+         static_cast<std::uint16_t>(WideCanvas::kBufferSize));
   putU32(header.data() + 10,
-         fmj::crc32(canvas.data(), fmj::MonoCanvas::kBufferSize));
+         fmj::crc32(canvas.data(), WideCanvas::kBufferSize));
   Serial.write(header.data(), header.size());
-  Serial.write(canvas.data(), fmj::MonoCanvas::kBufferSize);
+  Serial.write(canvas.data(), WideCanvas::kBufferSize);
 }

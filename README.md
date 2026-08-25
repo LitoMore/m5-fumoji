@@ -14,7 +14,8 @@ Native _Fumo Ji_ (《伏魔记》) firmware for the **M5Stack Cardputer ADV**, w
 
 The firmware now builds with the complete upstream C game engine, including its story, combat, menu, item, magic, shop, and save logic. The Cardputer port currently provides:
 
-- the original 160×96 monochrome framebuffer, scaled to the 240×135 display;
+- the original 160×96 monochrome framebuffer scaled to the 240×135 display,
+  plus native 1:1-pixel wide-map and wide-battle layouts;
 - Cardputer ADV TCA8418 and original Cardputer keyboard support through `M5Cardputer`;
 - streamed 16 KB ROM-bank reads from `/FMJ.LIB`, without loading the whole ROM into RAM;
 - on-demand `/HZK16` and `/ASC16` glyph reads;
@@ -92,8 +93,13 @@ Aa    A    S
 - `[` / `]` or `Q` / `E`: Page Up / Page Down.
 - `-`: decrease display brightness by 10%;
 - `=` or `+`: increase display brightness by 10%.
+- `V`: toggle between the original scaled view and native-pixel wide layouts
+  for map exploration and combat.
 
-Brightness is adjustable from 10% to 100% and is retained after restarting.
+Brightness is adjustable from 10% to 100%. Brightness and display mode are both
+retained after restarting.
+Native-pixel mode widens map exploration and combat. Menus, dialogue, and
+cutscenes automatically fall back to the original scaled view.
 
 ## Test
 

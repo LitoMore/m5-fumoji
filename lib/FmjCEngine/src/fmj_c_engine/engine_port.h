@@ -15,7 +15,44 @@ enum {
   FMJ_ENGINE_SCREEN_WIDTH = 160,
   FMJ_ENGINE_SCREEN_HEIGHT = 96,
   FMJ_ENGINE_SCREEN_BYTES = 160 * 96 / 8,
+  FMJ_ENGINE_WIDE_ACTOR_CAPACITY = 41,
 };
+
+typedef struct FmjEngineWideActor {
+  UINT8 type;
+  UINT8 world_x;
+  UINT8 world_y;
+  UINT8 direction;
+  UINT8 step;
+  UINT8 image_bank;
+  UINT16 image_offset;
+} FmjEngineWideActor;
+
+typedef struct FmjEngineWideMapState {
+  UINT16 base_bank;
+  UINT8 map_width;
+  UINT8 map_height;
+  UINT8 camera_x;
+  UINT8 camera_y;
+  UINT8 tile_width;
+  UINT8 tile_height;
+  UINT8 map_bank;
+  UINT16 map_offset;
+  UINT8 tile_bank;
+  UINT16 tile_offset;
+  UINT8 actor_count;
+  FmjEngineWideActor actors[FMJ_ENGINE_WIDE_ACTOR_CAPACITY];
+  /* UI pixels written after the current map frame was completed. */
+  UINT8 overlay_mask[FMJ_ENGINE_SCREEN_BYTES];
+} FmjEngineWideMapState;
+
+typedef struct FmjEngineBattleState {
+  UINT8 background;
+  UINT8 top_right;
+  UINT8 bottom_left;
+  /* Pixels written after the three static battle-background pictures. */
+  UINT8 overlay_mask[FMJ_ENGINE_SCREEN_BYTES];
+} FmjEngineBattleState;
 
 typedef struct FmjEngineHost {
   void* context;
@@ -27,6 +64,12 @@ typedef struct FmjEngineHost {
   UINT8 (*load_glyph)(void* context, const UINT8* encoded,
                       UINT8 glyph[32], UINT8* width, UINT8* consumed);
   void (*screen_changed)(void* context);
+  void (*screen_flush)(void* context);
+  void (*wide_map_begin)(void* context);
+  void (*wide_map_ready)(void* context);
+  void (*wide_map_end)(void* context);
+  void (*battle_begin)(void* context);
+  void (*battle_end)(void* context);
   void (*play_melody)(void* context, UINT8 melody);
   void (*stop_melody)(void* context);
 
@@ -53,6 +96,8 @@ void FmjEngineRun(void);
 void FmjEngineRequestStop(void);
 const UINT8* FmjEngineScreen(void);
 UINT8 FmjEngineRunning(void);
+UINT8 FmjEngineGetWideMapState(FmjEngineWideMapState* state);
+UINT8 FmjEngineGetBattleState(FmjEngineBattleState* state);
 
 #ifdef __cplusplus
 }

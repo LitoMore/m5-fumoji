@@ -4,6 +4,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstring>
 
@@ -55,6 +56,38 @@ int hexDigit(char value) {
   return -1;
 }
 
+WideMapState toWideMapState(const FmjEngineWideMapState& source) {
+  WideMapState state{};
+  state.baseBank = source.base_bank;
+  state.mapWidth = source.map_width;
+  state.mapHeight = source.map_height;
+  state.cameraX = source.camera_x;
+  state.cameraY = source.camera_y;
+  state.tileWidth = source.tile_width;
+  state.tileHeight = source.tile_height;
+  state.mapBank = source.map_bank;
+  state.mapOffset = source.map_offset;
+  state.tileBank = source.tile_bank;
+  state.tileOffset = source.tile_offset;
+  state.actorCount = std::min<std::uint8_t>(
+      source.actor_count,
+      static_cast<std::uint8_t>(WideMapState::kActorCapacity));
+  for (std::uint8_t index = 0; index < state.actorCount; ++index) {
+    const auto& input = source.actors[index];
+    auto& output = state.actors[index];
+    output.type = input.type;
+    output.worldX = input.world_x;
+    output.worldY = input.world_y;
+    output.direction = input.direction;
+    output.step = input.step;
+    output.imageBank = input.image_bank;
+    output.imageOffset = input.image_offset;
+  }
+  std::memcpy(state.overlayMask.data(), source.overlay_mask,
+              state.overlayMask.size());
+  return state;
+}
+
 }  // namespace
 
 bool CEngineRuntime::begin(LittleFsByteSource& game,
@@ -64,6 +97,20 @@ bool CEngineRuntime::begin(LittleFsByteSource& game,
   hzk16_ = &hzk16;
   asc16_ = &asc16;
   scanSaves();
+  if (!battleRenderer_.begin(game)) {
+    error_ = "Unable to index battle resources";
+    return false;
+  }
+  frameMutex_ = xSemaphoreCreateMutex();
+  if (frameMutex_ == nullptr) {
+    error_ = "Unable to create frame mutex";
+    return false;
+  }
+  battleRendererMutex_ = xSemaphoreCreateMutex();
+  if (battleRendererMutex_ == nullptr) {
+    error_ = "Unable to create battle renderer mutex";
+    return false;
+  }
 
   FmjEngineHost host{};
   host.context = this;
@@ -73,6 +120,12 @@ bool CEngineRuntime::begin(LittleFsByteSource& game,
   host.poll_key = pollKey;
   host.load_glyph = loadGlyph;
   host.screen_changed = screenChanged;
+  host.screen_flush = screenFlush;
+  host.wide_map_begin = wideMapBegin;
+  host.wide_map_ready = wideMapReady;
+  host.wide_map_end = wideMapEnd;
+  host.battle_begin = battleBegin;
+  host.battle_end = battleEnd;
   host.play_melody = playMelody;
   host.stop_melody = stopMelody;
   host.file_create = fileCreate;
@@ -104,11 +157,68 @@ bool CEngineRuntime::update(CardputerInput& input, CardputerDisplay& display,
                             fmj::MonoCanvas& canvas) {
   const auto now = millis();
   const auto key = toEngineKey(input.poll(now));
+  if (input.takeDisplayModeToggle()) {
+    display.toggleMode(now);
+    dirty_ = true;
+    forcePresent_ = true;
+    const bool useWideBattle =
+        display.mode() == CardputerDisplay::Mode::WideMap && battleActive_ &&
+        battleReady_;
+    const bool useWideMap =
+        display.mode() == CardputerDisplay::Mode::WideMap && wideMapReady_;
+    Serial.printf("FMJ display mode: %s ready=%s canvas=%s\n",
+                  display.mode() == CardputerDisplay::Mode::WideMap
+                      ? "wide-map"
+                      : "scaled",
+                  wideMapReady_ ? "yes" : "no",
+                  useWideBattle ? "wide-battle" :
+                  useWideMap ? "wide-map" : "scaled");
+  }
   if (key != 0xFF && pendingKey_ == 0xFF) pendingKey_ = key;
   if (dirty_ && now - lastFrameMs_ >= 16U) {
+    if (display.mode() == CardputerDisplay::Mode::WideMap && battleActive_ &&
+        !battleReady_ && battleCaptureRevision_ == battleRenderRevision_) {
+      return false;
+    }
     dirty_ = false;
-    std::memcpy(canvas.data(), FmjEngineScreen(), fmj::MonoCanvas::kBufferSize);
-    display.present(canvas);
+    bool renderedBattleFrame = false;
+    if (display.mode() == CardputerDisplay::Mode::WideMap && battleActive_ &&
+        battleCaptureRevision_ != battleRenderRevision_) {
+      xSemaphoreTake(frameMutex_, portMAX_DELAY);
+      const auto captureRevision = battleCaptureRevision_;
+      battleRenderSourceCanvas_ = battleSourceCanvas_;
+      battleRenderState_ = battlePendingState_;
+      xSemaphoreGive(frameMutex_);
+      xSemaphoreTake(battleRendererMutex_, portMAX_DELAY);
+      const bool rendered = battleRenderer_.render(
+          *game_, battleRenderState_, battleRenderSourceCanvas_,
+          presentationCanvas_);
+      xSemaphoreGive(battleRendererMutex_);
+      if (rendered) {
+        battleRenderRevision_ = captureRevision;
+        battleReady_ = true;
+        renderedBattleFrame = true;
+      }
+    }
+    if (display.mode() == CardputerDisplay::Mode::WideMap && battleActive_ &&
+        battleReady_) {
+      if (!renderedBattleFrame && !forcePresent_) return false;
+      display.present(presentationCanvas_);
+    } else if (display.mode() == CardputerDisplay::Mode::WideMap &&
+               wideMapReady_) {
+      xSemaphoreTake(frameMutex_, portMAX_DELAY);
+      presentationCanvas_ = wideCanvases_[wideCanvasIndex_];
+      xSemaphoreGive(frameMutex_);
+      display.present(presentationCanvas_);
+    } else {
+      std::memcpy(canvas.data(), FmjEngineScreen(),
+                  fmj::MonoCanvas::kBufferSize);
+      display.present(canvas);
+    }
+    forcePresent_ = false;
+    if (battleActive_ && battleCaptureRevision_ != battleRenderRevision_) {
+      dirty_ = true;
+    }
     lastFrameMs_ = now;
     return true;
   }
@@ -192,7 +302,129 @@ std::uint8_t CEngineRuntime::loadGlyph(void* context,
 }
 
 void CEngineRuntime::screenChanged(void* context) {
-  static_cast<CEngineRuntime*>(context)->dirty_ = true;
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  // Map drawing emits many intermediate screen updates. Publish only the
+  // complete frame from wideMapReady() so scaled and wide frames cannot
+  // alternate while one logical map frame is being assembled.
+  if (runtime->wideMapRendering_) return;
+  runtime->dirty_ = true;
+}
+
+void CEngineRuntime::screenFlush(void* context) {
+  // GuiGetMsg uses this to publish direct pixel writes before sleeping. It
+  // does not mean that the current wide-map frame has become invalid.
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  if (runtime->battleActive_ && runtime->game_ != nullptr) {
+    FmjEngineBattleState engineState{};
+    if (FmjEngineGetBattleState(&engineState) != 0) {
+      WideBattleState state{};
+      state.background = engineState.background;
+      state.topRight = engineState.top_right;
+      state.bottomLeft = engineState.bottom_left;
+      std::memcpy(state.overlayMask.data(), engineState.overlay_mask,
+                  state.overlayMask.size());
+      if (!runtime->battleBackgroundPrepared_) {
+        xSemaphoreTake(runtime->battleRendererMutex_, portMAX_DELAY);
+        runtime->battleBackgroundPrepared_ =
+            runtime->battleRenderer_.prepare(*runtime->game_, state);
+        xSemaphoreGive(runtime->battleRendererMutex_);
+      }
+      if (runtime->battleBackgroundPrepared_) {
+        xSemaphoreTake(runtime->frameMutex_, portMAX_DELAY);
+        std::memcpy(runtime->battleSourceCanvas_.data(), FmjEngineScreen(),
+                    fmj::MonoCanvas::kBufferSize);
+        runtime->battlePendingState_ = state;
+        ++runtime->battleCaptureRevision_;
+        xSemaphoreGive(runtime->frameMutex_);
+      }
+    }
+  } else if (runtime->wideMapReady_ && !runtime->wideMapRendering_) {
+    FmjEngineWideMapState engineState{};
+    if (FmjEngineGetWideMapState(&engineState) != 0) {
+      const auto state = toWideMapState(engineState);
+      fmj::MonoCanvas source{};
+      std::memcpy(source.data(), FmjEngineScreen(), source.kBufferSize);
+      xSemaphoreTake(runtime->frameMutex_, portMAX_DELAY);
+      const auto renderCanvasIndex =
+          static_cast<std::uint8_t>(runtime->wideCanvasIndex_ ^ 1U);
+      WideMapRenderer::compositeOverlay(
+          state, source, runtime->wideMapBaseCanvas_,
+          runtime->wideCanvases_[renderCanvasIndex]);
+      runtime->wideCanvasIndex_ = renderCanvasIndex;
+      xSemaphoreGive(runtime->frameMutex_);
+    }
+  }
+  runtime->dirty_ = true;
+}
+
+void CEngineRuntime::wideMapBegin(void* context) {
+  static_cast<CEngineRuntime*>(context)->wideMapRendering_ = true;
+}
+
+void CEngineRuntime::wideMapReady(void* context) {
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  xSemaphoreTake(runtime->frameMutex_, portMAX_DELAY);
+  FmjEngineWideMapState engineState{};
+  const bool stateReady = FmjEngineGetWideMapState(&engineState) != 0;
+  const bool rendered = runtime->game_ != nullptr && stateReady &&
+                        runtime->wideRenderer_.render(
+                            *runtime->game_, toWideMapState(engineState),
+                            runtime->wideMapBaseCanvas_);
+  if (rendered) {
+    const auto renderCanvasIndex =
+        static_cast<std::uint8_t>(runtime->wideCanvasIndex_ ^ 1U);
+    runtime->wideCanvases_[renderCanvasIndex] = runtime->wideMapBaseCanvas_;
+    runtime->wideCanvasIndex_ = renderCanvasIndex;
+    runtime->wideMapReady_ = true;
+  }
+  runtime->dirty_ = true;
+  static int previousResult = -1;
+  const int result = rendered ? 2 : stateReady ? 1 : 0;
+  if (result != previousResult) {
+    Serial.printf(
+        "FMJ wide map: state=%s render=%s error=%u map=%ux%u tile=%ux%u "
+        "actors=%u base=%u mapres=%u:%u tileres=%u:%u\n",
+        stateReady ? "ok" : "failed", rendered ? "ok" : "failed",
+        static_cast<unsigned>(runtime->wideRenderer_.error()),
+        engineState.map_width, engineState.map_height,
+        engineState.tile_width, engineState.tile_height,
+        engineState.actor_count, engineState.base_bank,
+        engineState.map_bank, engineState.map_offset,
+        engineState.tile_bank, engineState.tile_offset);
+    previousResult = result;
+  }
+  xSemaphoreGive(runtime->frameMutex_);
+  runtime->wideMapRendering_ = false;
+}
+
+void CEngineRuntime::wideMapEnd(void* context) {
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  runtime->wideMapRendering_ = false;
+  // A map event can end the current wide-map update before LOADMAP has
+  // produced the replacement frame.  Keep the last complete wide frame as
+  // the transition frame so the display task cannot briefly fall back to a
+  // scaled 160x96 framebuffer.  Battle rendering takes precedence as soon as
+  // battleBegin() runs, and the next wideMapReady() replaces this frame
+  // atomically with the new map.
+  runtime->dirty_ = true;
+}
+
+void CEngineRuntime::battleBegin(void* context) {
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  xSemaphoreTake(runtime->frameMutex_, portMAX_DELAY);
+  runtime->battleRenderRevision_ = runtime->battleCaptureRevision_;
+  xSemaphoreGive(runtime->frameMutex_);
+  runtime->battleActive_ = true;
+  runtime->battleReady_ = false;
+  runtime->battleBackgroundPrepared_ = false;
+  runtime->dirty_ = true;
+}
+
+void CEngineRuntime::battleEnd(void* context) {
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  runtime->battleActive_ = false;
+  runtime->battleReady_ = false;
+  runtime->dirty_ = true;
 }
 
 void CEngineRuntime::playMelody(void* context, std::uint8_t melody) {

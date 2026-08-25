@@ -7,11 +7,11 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "fmj/mono_canvas.hpp"
+#include "wide_canvas.hpp"
 
 class ScreenStreamer {
  public:
-  void update(const fmj::MonoCanvas& canvas, bool frameChanged);
+  void update(const WideCanvas& canvas, bool frameChanged);
   bool active() const { return enabled_; }
 
  private:
@@ -21,7 +21,7 @@ class ScreenStreamer {
 
   void readCommands();
   void handleCommand();
-  void sendFrame(const fmj::MonoCanvas& canvas);
+  void sendFrame(const WideCanvas& canvas);
 
   std::array<char, kCommandCapacity> command_{};
   std::size_t commandLength_ = 0;

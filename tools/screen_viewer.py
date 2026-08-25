@@ -21,8 +21,8 @@ from serial.tools import list_ports
 
 MAGIC = b"FMJF"
 HEADER = struct.Struct("<4sBBHHI")
-WIDTH = 160
-HEIGHT = 96
+WIDTH = 240
+HEIGHT = 135
 PAYLOAD_SIZE = WIDTH * HEIGHT // 8
 ESPRESSIF_VID = 0x303A
 USB_SERIAL_JTAG_PID = 0x1001
@@ -95,7 +95,19 @@ def launch_ffplay(scale: int) -> subprocess.Popen[bytes]:
     )
 
 
-def run(port: str, scale: int, no_display: bool = False, max_frames: int = 0) -> int:
+def save_frame(path: str, payload: bytes) -> None:
+    with open(path, "wb") as output:
+        output.write(f"P5\n{WIDTH} {HEIGHT}\n255\n".encode())
+        output.write(expand_frame(payload))
+
+
+def run(
+    port: str,
+    scale: int,
+    no_display: bool = False,
+    max_frames: int = 0,
+    output: str | None = None,
+) -> int:
     connection = open_serial(port)
     player = None if no_display else launch_ffplay(scale)
     buffer = bytearray()
@@ -142,6 +154,8 @@ def run(port: str, scale: int, no_display: bool = False, max_frames: int = 0) ->
                 assert player.stdin is not None
                 player.stdin.write(expand_frame(payload))
                 player.stdin.flush()
+            if output is not None:
+                save_frame(output.format(sequence=sequence), payload)
             frames += 1
             if max_frames and frames >= max_frames:
                 break
@@ -188,6 +202,13 @@ def main() -> int:
         default=0,
         help="exit after this many valid frames (0 keeps running)",
     )
+    parser.add_argument(
+        "--output",
+        help=(
+            "save received frames as binary PGM; include {sequence} in the "
+            "path to retain every frame"
+        ),
+    )
     parser.add_argument("--self-test", action="store_true")
     arguments = parser.parse_args()
     if arguments.self_test:
@@ -200,6 +221,7 @@ def main() -> int:
             arguments.scale,
             arguments.no_display,
             arguments.frames,
+            arguments.output,
         )
     except (RuntimeError, serial.SerialException) as error:
         print(f"screen viewer: {error}", file=sys.stderr)

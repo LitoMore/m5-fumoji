@@ -79,7 +79,7 @@ void loop() {
     display.adjustBrightness(brightnessDelta, now);
   }
   display.update(now);
-  streamer.update(canvas, frameChanged);
+  streamer.update(display.frame(), frameChanged);
   reportMelodyState();
   delay(5);
 }

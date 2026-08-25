@@ -658,7 +658,9 @@ void _00201EB2()
     }
 _6ECD:
     //      当前地图的章       当前地图的节    屏幕左上角定位到地图的x处 屏幕左上角定位到地图的y处
+    FmjEngineNotifyWideMapBegin();
     __8DD6(MCU_memory[0x1979], MCU_memory[0x197A], MCU_memory[0x197C], MCU_memory[0x197D]);
+    FmjEngineNotifyWideMapReady();
 }
 
 UINT8 _00201F1E(UINT8 _17CF, UINT8 _17D0, UINT8* _17D1)
@@ -1624,10 +1626,15 @@ void _0020484C()
     UINT8 y = MCU_memory[*(UINT16*)(MCU_memory+0x1AA0)+*(UINT16*)(MCU_memory+0x1AA2)];
     *(UINT16*)(MCU_memory+0x1AA0) += 0x0002;
     LOG("LOADMAP %d %d %d %d\n", m, n, x, y);
+    /* LOADMAP can run inside a map event, after the outer map frame was
+     * already published.  Treat its complete redraw as a new map base rather
+     * than allowing it to become part of the UI overlay mask. */
+    FmjEngineNotifyWideMapBegin();
     __8DD6(m, n, x, y);
     __8D96();
     __8D99();
     __8DAE(MCU_memory + *(UINT16*)(MCU_memory+0x1936));
+    FmjEngineNotifyWideMapReady();
 }
 
 // SCREENS x y
@@ -1641,6 +1648,7 @@ void _00204A08()
     y = MCU_memory[*(UINT16*)(MCU_memory+0x1AA0)+*(UINT16*)(MCU_memory+0x1AA2)];
     *(UINT16*)(MCU_memory+0x1AA0) += 0x0002;
     LOG("SCREENS %d %d\n", x, y);
+    FmjEngineNotifyWideMapBegin();
     MCU_memory[0x197C] = x; // 屏幕左上角定位到地图的x处
     MCU_memory[0x197D] = y; // 屏幕左上角定位到地图的y处
     // 加载要显示的地图块数据
@@ -1649,6 +1657,7 @@ void _00204A08()
     __8D96();
     __8D99();
     __8DAE(MCU_memory + *(UINT16*)(MCU_memory+0x1936));
+    FmjEngineNotifyWideMapReady();
 }
 
 // SETCONTROLID actor
@@ -3001,10 +3010,12 @@ void _0020A28D()
 {
     *(UINT16*)(MCU_memory+0x1AA0) += 0x0001;
     LOG("SHOWSCREEN\n");
+    FmjEngineNotifyWideMapBegin();
     __8DA2();
     __8D96();
     __8D99();
     __8DAE(MCU_memory + *(UINT16*)(MCU_memory+0x1936));
+    FmjEngineNotifyWideMapReady();
 }
 
 // ATTRIBSET actor type attrval
@@ -5835,6 +5846,7 @@ void _00214000()
         {
             _523D:
             _17CA = _00214347(&_17C9);
+            FmjEngineNotifyWideMapBegin();
             MCU_memory[0x1A93] = MCU_memory[0x1A93]|0x40|0x20;
             _00215865();
             //  定时触发事件的定时时间
@@ -5850,7 +5862,9 @@ void _00214000()
                     // 定时触发事件的定时时间
                     *(UINT16*)(MCU_memory+0x1A9D) = 0x0000;
                     //      定时触发事件
+                    FmjEngineNotifyWideMapEnd();
                     __8DB4(MCU_memory[0x1A9C]);
+                    FmjEngineNotifyWideMapBegin();
                 }
             }
         }
@@ -5860,8 +5874,10 @@ void _00214000()
             continue;
         }
         _52E4:
+        FmjEngineNotifyWideMapBegin();
         _00214B98();
         __8DAE(MCU_memory + *(UINT16*)(MCU_memory+0x1936));
+        FmjEngineNotifyWideMapReady();
         if (_17CA)
         {
             _5318:
@@ -5879,6 +5895,11 @@ UINT8 _00214347(UINT8* _17D0)
     UINT8 _17CA = 0x01; // 默认需要更新地图
     UINT8 _17C9 = 0x00; // 事件号
     UINT8 _17C8;
+    if (*_17D0 == CHAR_LEFT || *_17D0 == CHAR_RIGHT ||
+        *_17D0 == CHAR_DOWN || *_17D0 == CHAR_UP)
+    {
+        FmjEngineNotifyWideMapBegin();
+    }
     switch (*_17D0)
     {
     case CHAR_LEFT: // _5395
@@ -6860,6 +6881,7 @@ void _00218000(UINT8 x, UINT8 y, UINT8 width, UINT8 height, UINT8* _17D3)
     UINT8* screen_buffer = MCU_memory + *(UINT16*)(MCU_memory+0x1936);
     UINT8 _C8;
     UINT8 _F3 = 0x00;
+    FmjEngineTrackTransparentPicture(x, y, width, height, _17D3);
     if (y1 &0x80)
     {
         // 如果y1为负数
@@ -7919,6 +7941,12 @@ UINT8 _0021C000(UINT8 _17CF)
         return 0xFF;
     }
     _5020:
+    /* Battles can be entered from inside the map movement call (random
+     * encounters), before the map loop regains control. End the wide-map
+     * frame at the common battle entry so battle drawing is always published
+     * through the scaled framebuffer. */
+    FmjEngineNotifyWideMapEnd();
+    FmjEngineNotifyBattleBegin();
     _17CE = 0x00;
     MCU_memory[0x1927] = 0x00;
     MCU_memory[0x1925] = _17CF;
@@ -7963,6 +7991,7 @@ UINT8 _0021C000(UINT8 _17CF)
         __8E93();
     }
     _50BC:
+    FmjEngineNotifyBattleEnd();
     if (_17CE != 0x02)
     { // 战斗没有失败
         _50C8:
@@ -11831,6 +11860,13 @@ void _0022998D(UINT8 _17CF, UINT8 _17D0)
         {
             _6FBC:
             __8F07(_17B4, _17B3, _17BC, _17BB, _17B6, _17B5);
+            /* Some enemy attack sequences redraw the original lower-left
+             * wall as a 160x96 background repair. Wide-screen hosts already
+             * relocated that decoration, so it must not become an overlay. */
+            if (_17B3 == 0x04 && _17BC == MCU_memory[0x18DF])
+            {
+                FmjEngineExcludeBattleOverlayRect(0x00, 0x3D, 0x28, 0x5F);
+            }
         }
         _6FFE:
         if (MCU_memory[0x1935])
@@ -12159,6 +12195,10 @@ _7B90:
     __8F07(DAT_SUNDRYPIC, 0x04, MCU_memory[0x18DE], 0x00, 0x42, 0x00);
     //                          左下角图
     __8F07(DAT_SUNDRYPIC, 0x04, MCU_memory[0x18DF], 0x00, 0x00, 0x3D);
+    /* Everything drawn after this point belongs to the dynamic battle layer.
+     * Keeping that layer explicit lets wide-screen hosts relocate the two
+     * corner pictures without guessing foreground pixels by colour. */
+    FmjEngineNotifyBattleBackgroundReady();
     for (UINT8 _17CC=0x00; _17CC<0x03; _17CC++)
     {
         _7C6E:

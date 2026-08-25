@@ -41,6 +41,18 @@ fmj::InputKey mapCharacter(char value) {
 
 fmj::InputKey CardputerInput::poll(std::uint32_t nowMs) {
   M5Cardputer.update();
+
+  // Keyboard.isChange() in M5Cardputer only compares the number of held keys.
+  // Track the display-mode key separately so the ADV keyboard cannot lose the
+  // press when its key-count based change detection misses an event.
+  const bool displayModeKeyPressed =
+      M5Cardputer.Keyboard.isKeyPressed('v') ||
+      M5Cardputer.Keyboard.isKeyPressed('V');
+  if (displayModeKeyPressed && !displayModeKeyHeld_) {
+    displayModeToggle_ = true;
+  }
+  displayModeKeyHeld_ = displayModeKeyPressed;
+
   if (M5Cardputer.Keyboard.isChange()) {
     const auto current = M5Cardputer.Keyboard.isPressed()
                              ? readCurrentKey()
@@ -72,6 +84,12 @@ std::int8_t CardputerInput::takeBrightnessDelta() {
   return delta;
 }
 
+bool CardputerInput::takeDisplayModeToggle() {
+  const bool toggle = displayModeToggle_;
+  displayModeToggle_ = false;
+  return toggle;
+}
+
 fmj::InputKey CardputerInput::readCurrentKey() {
   const Keyboard_Class::KeysState state = M5Cardputer.Keyboard.keysState();
   if (state.enter) return fmj::InputKey::Confirm;
@@ -83,6 +101,8 @@ fmj::InputKey CardputerInput::readCurrentKey() {
   // Treat a bare Aa (Shift) press as Left, while preserving Shift+key input.
   if (state.shift && state.word.empty()) return fmj::InputKey::Left;
   for (const char value : state.word) {
+    const auto character = static_cast<char>(
+        std::tolower(static_cast<unsigned char>(value)));
     if (value == '-') {
       brightnessDelta_ = -1;
       return fmj::InputKey::None;
@@ -91,6 +111,7 @@ fmj::InputKey CardputerInput::readCurrentKey() {
       brightnessDelta_ = 1;
       return fmj::InputKey::None;
     }
+    if (character == 'v') return fmj::InputKey::None;
     const auto mapped = mapCharacter(value);
     if (mapped != fmj::InputKey::None) return mapped;
   }

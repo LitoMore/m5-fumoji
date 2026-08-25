@@ -2,6 +2,8 @@
 #pragma once
 
 #include <FS.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/semphr.h>
 
 #include <array>
 #include <cstddef>
@@ -11,6 +13,9 @@
 #include "cardputer_input.hpp"
 #include "fmj/mono_canvas.hpp"
 #include "littlefs_byte_source.hpp"
+#include "wide_canvas.hpp"
+#include "wide_battle_renderer.hpp"
+#include "wide_map_renderer.hpp"
 
 extern "C" {
 #include "fmj_c_engine/engine_port.h"
@@ -52,6 +57,12 @@ class CEngineRuntime {
                                 std::uint8_t glyph[32], std::uint8_t* width,
                                 std::uint8_t* consumed);
   static void screenChanged(void* context);
+  static void screenFlush(void* context);
+  static void wideMapBegin(void* context);
+  static void wideMapReady(void* context);
+  static void wideMapEnd(void* context);
+  static void battleBegin(void* context);
+  static void battleEnd(void* context);
   static void playMelody(void* context, std::uint8_t melody);
   static void stopMelody(void* context);
   static std::uint8_t fileCreate(void* context, std::uint8_t filetype,
@@ -90,12 +101,32 @@ class CEngineRuntime {
   LittleFsByteSource* game_ = nullptr;
   LittleFsByteSource* hzk16_ = nullptr;
   LittleFsByteSource* asc16_ = nullptr;
+  std::array<WideCanvas, 2> wideCanvases_{};
+  WideCanvas wideMapBaseCanvas_{};
+  WideCanvas presentationCanvas_{};
+  WideMapRenderer wideRenderer_{};
+  WideBattleRenderer battleRenderer_{};
+  fmj::MonoCanvas battleSourceCanvas_{};
+  fmj::MonoCanvas battleRenderSourceCanvas_{};
+  WideBattleState battlePendingState_{};
+  WideBattleState battleRenderState_{};
   std::array<SaveFile, kFileCapacity> files_{};
   volatile std::uint8_t pendingKey_ = 0xFF;
   volatile bool dirty_ = false;
+  volatile bool wideMapRendering_ = false;
+  volatile bool wideMapReady_ = false;
+  volatile std::uint8_t wideCanvasIndex_ = 0;
+  volatile bool battleActive_ = false;
+  volatile bool battleReady_ = false;
+  volatile bool battleBackgroundPrepared_ = false;
+  volatile std::uint32_t battleCaptureRevision_ = 0;
+  volatile std::uint32_t battleRenderRevision_ = 0;
+  SemaphoreHandle_t frameMutex_ = nullptr;
+  SemaphoreHandle_t battleRendererMutex_ = nullptr;
   volatile std::uint32_t melodyRevision_ = 0;
   volatile std::uint8_t melodyNumber_ = 0;
   volatile bool melodyPlaying_ = false;
   std::uint32_t lastFrameMs_ = 0;
+  bool forcePresent_ = false;
   const char* error_ = nullptr;
 };
