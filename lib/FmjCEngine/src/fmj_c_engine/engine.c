@@ -4796,7 +4796,7 @@ UINT8 _00210000(UINT16 _17D0, UINT8 _17D2, UINT8 _17D3)
             {
             case CHAR_UP: // _5A4A
             case CHAR_LEFT: // _5A4A
-                if (_1798 > 0x01)
+                if (_179D > 0x00)
                 {
                     _5A5E:
                     _179D--;
@@ -12793,22 +12793,81 @@ UINT8 _0022E655(UINT8 _17CF, UINT8 _17D0, UINT8* _17D1, UINT16* _17D3)
     return _17CB-_17CC;
 }
 
+static void DeduplicateActorMagic(UINT8 actor)
+{
+    const UINT8 capacity = 0x32;
+    UINT8 count = MCU_memory[actor * 0x0019 + 0x1988 + 0x0E];
+    UINT16 magic = *(UINT16*)(MCU_memory + actor * 0x0019 + 0x1988 + 0x15);
+    UINT8 write = 0x00;
+
+    if (magic == 0x0000)
+    {
+        return;
+    }
+    if (count > capacity)
+    {
+        count = capacity;
+    }
+    for (UINT8 read = 0x00; read < count; read++)
+    {
+        UINT8 type = MCU_memory[magic + read * 0x0002];
+        UINT8 index = MCU_memory[magic + read * 0x0002 + 0x0001];
+        UINT8 duplicate = 0x00;
+        for (UINT8 existing = 0x00; existing < write; existing++)
+        {
+            if (MCU_memory[magic + existing * 0x0002] == type &&
+                MCU_memory[magic + existing * 0x0002 + 0x0001] == index)
+            {
+                duplicate = 0x01;
+                break;
+            }
+        }
+        if (duplicate == 0x00)
+        {
+            MCU_memory[magic + write * 0x0002] = type;
+            MCU_memory[magic + write * 0x0002 + 0x0001] = index;
+            write++;
+        }
+    }
+    if (write < capacity)
+    {
+        fillmem(MCU_memory + magic + write * 0x0002,
+                (capacity - write) * 0x0002, 0x00);
+    }
+    MCU_memory[actor * 0x0019 + 0x1988 + 0x0E] = write;
+}
+
 void _0022E873(UINT8 _17CF, UINT8 _17D0, UINT8 _17D1)
 {
     UINT8 _17CA;
     UINT8 _17BC[0x0C];
     UINT16 _17BA;
     UINT8* _17C8;
+    UINT8 _17C7;
     if (MCU_memory[0x1935])
     {
         _788E:
         return;
     }
     _7891:
+    DeduplicateActorMagic(_17CF);
     // 角色学会
     _17CA = MCU_memory[_17CF*0x0019+0x1988+0x0E];
     // 指向魔法链数据
     _17BA = *(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x15);
+    for (_17C7 = 0x00; _17C7 < _17CA; _17C7++)
+    {
+        if (MCU_memory[_17C7 * 0x0002 + _17BA] == _17D0 &&
+            MCU_memory[_17C7 * 0x0002 + _17BA + 0x0001] == _17D1)
+        {
+            return;
+        }
+    }
+    if (_17CA >= 0x32)
+    {
+        MCU_memory[0x1935] = OVERFLOW_MAG;
+        return;
+    }
     MCU_memory[_17CA*0x0002+_17BA] = _17D0;
     MCU_memory[_17CA*0x0002+_17BA+0x0001] = _17D1;
     // 角色学会
@@ -12912,10 +12971,10 @@ _80D7:
     _0022CFD6(_17CF);
     _17B9 = _0022D9E8(_17CF, _17BA);
     _0022D34B(_17CF, _17BA);
-    if (_17BA[13] < _17B9)
+    if (_17BA[0x13] < _17B9)
     {
         _8199:
-        _0022F1D7(_17CF, _17BA[13], _17B9);
+        _0022F1D7(_17CF, _17BA[0x13], _17B9);
     }
 }
 
@@ -18213,6 +18272,8 @@ UINT8 _00245A87(UINT8 _17CF, UINT8* _17D0)
     _17CA += 0x08;
     // 复制角色魔法链数据
     _SysMemcpy(MCU_memory + *(UINT16*)(MCU_memory + _17CF * 0x0019 + 0x1988 + 0x15), _17CA + _17D0, 0x0064);
+    // Repair duplicate spells written by older builds while preserving order.
+    DeduplicateActorMagic(_17CF);
     // 指向背包中的道具
     *(UINT16*)(MCU_memory+_17CF*0x0019+0x1988+0x0017) = *(UINT16*)(MCU_memory+0x192F);
     return 0x01;
