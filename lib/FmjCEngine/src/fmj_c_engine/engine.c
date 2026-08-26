@@ -13,6 +13,12 @@
 UINT8 MCU_memory_dummy[0x8000];
 UINT8 MCU_memory[0x10000];
 
+/* Scene-object events are distinguished from map-tile events before dispatch.
+ * A few original game-data scripts contain a stale DELETEBOX operand, so the
+ * interacted box itself is the authoritative delete target for its event. */
+static UINT8 pending_scene_event = 0x00;
+static UINT8 active_map_event = 0x00;
+
 //UINT8 main(void* para1, void* para2)
 void _00200046()
 {
@@ -1557,6 +1563,9 @@ UINT8 _00204563(UINT8 _17CF)
     UINT16 _17CB;
     UINT16 _17C9;
     UINT8 _17C8;
+    UINT8 previous_event;
+    UINT8 scene_event = pending_scene_event;
+    pending_scene_event = 0x00;
     if (_17CF+0x01 == 0x01)
     {
         _5585:
@@ -1578,14 +1587,18 @@ UINT8 _00204563(UINT8 _17CF)
         return 0x00;
     }
     _5639:
+    previous_event = active_map_event;
+    active_map_event = scene_event == _17CF ? _17CF : 0x00;
     if (__8DB1(_17CB) == 0x00)
     {
         _566C:
+        active_map_event = previous_event;
         *(UINT16*)(MCU_memory+0x1AA0) = _17C9;
         MCU_memory[0x1AA4] = _17C8;
         return 0x00;
     }
     _568D:
+    active_map_event = previous_event;
     return 0x02;
 }
 
@@ -1713,8 +1726,28 @@ void _00204C97()
 // DELETEBOX id
 void _00204E3D()
 {
-    LOG("DELETEBOX->");
-    __8D2D();
+    UINT8 id;
+    UINT8 target;
+    UINT16 target_pointer;
+    *(UINT16*)(MCU_memory+0x1AA0) += 0x0001;
+    id = MCU_memory[*(UINT16*)(MCU_memory+0x1AA0)+*(UINT16*)(MCU_memory+0x1AA2)];
+    *(UINT16*)(MCU_memory+0x1AA0) += 0x0002;
+    target = id;
+    if (active_map_event >= 0x01 && active_map_event <= 0x28)
+    {
+        target_pointer = *(UINT16*)(MCU_memory+0x19D3+((active_map_event-0x01)<<1));
+        if (target_pointer != 0x0000 && MCU_memory[target_pointer] == 0x04)
+        {
+            target = active_map_event;
+        }
+    }
+    LOG("DELETEBOX %d (target %d)\n", id, target);
+    if (target >= 0x01 && target <= 0x28 &&
+        *(UINT16*)(MCU_memory+0x19D3+((target-0x01)<<1)) != 0x0000)
+    {
+        __8D9C(target-0x01);
+    }
+    __8DDF(target-0x01);
 }
 
 // GAINGOODS type index
@@ -6231,6 +6264,7 @@ void _00215227(UINT8 _17CF)
 UINT8 _00215346()
 {
     UINT8 _17CE;
+    pending_scene_event = 0x00;
     //            屏幕左上角定位到地图的x处    角色x坐标
     UINT8 _17CD = MCU_memory[0x197C] + MCU_memory[MCU_memory[0x1A94] * 0x0019 + 0x1988 + 0x05];
     //            屏幕左上角定位到地图的y处    角色y坐标
@@ -6298,6 +6332,7 @@ _64CC:
     {
         _6510:
         _17CE = _0021554E(_17CD, _17CC);
+        pending_scene_event = _17CE;
     }
     _6534:
     return _17CE;
