@@ -254,6 +254,15 @@ void FmjEngineNotifyWideMapEnd(void) {
   if (host.wide_map_end != NULL) host.wide_map_end(host.context);
 }
 
+void FmjEngineNotifyWideMapClear(void) {
+  wide_map_overlay_tracking = 0;
+  memset(wide_map_overlay_mask, 0, sizeof(wide_map_overlay_mask));
+  memset(wide_map_snapshot_mask, 0, sizeof(wide_map_snapshot_mask));
+  wide_map_snapshot_mask_valid = 0;
+  clear_battle_mask_saves();
+  if (host.wide_map_clear != NULL) host.wide_map_clear(host.context);
+}
+
 void FmjEngineNotifyBattleBegin(void) {
   battle_active = 1;
   battle_overlay_tracking = 0;

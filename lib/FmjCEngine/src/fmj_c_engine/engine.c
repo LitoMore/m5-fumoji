@@ -35,8 +35,13 @@ void _00200046()
         if (MCU_memory[0x1935] == 0xFD)
         {
             _506D:
+            /* GAMEOVER and the in-game "end game" command both return to
+             * the engine menu.  Drop the completed wide-map frame before
+             * the menu is drawn, and release scene objects as well as player
+             * actors so a subsequent new game cannot reuse occupied IDs. */
+            FmjEngineNotifyWideMapClear();
             MCU_memory[0x1935] = 0x00;
-            __8EE9(0x02);
+            __8EE9(0x03);
         }
     }
     _5082:

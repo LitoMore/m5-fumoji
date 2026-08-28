@@ -8,6 +8,7 @@
 
 static UINT8 game[0x8000];
 static UINT32 clock_ms;
+static UINT8 wide_map_clear_count;
 extern UINT8 MCU_memory[0x10000];
 
 static UINT8 read_game(void* context, UINT32 offset, UINT8* destination,
@@ -31,6 +32,11 @@ static void yield_clock(void* context) {
 static UINT8 no_key(void* context) {
   (void)context;
   return 0xFF;
+}
+
+static void wide_map_cleared(void* context) {
+  (void)context;
+  ++wide_map_clear_count;
 }
 
 static void test_magic_selection_moves_up(void) {
@@ -88,6 +94,7 @@ int main(void) {
   host.millis = read_clock;
   host.yield = yield_clock;
   host.poll_key = no_key;
+  host.wide_map_clear = wide_map_cleared;
   FmjEngineSetHost(&host);
   assert(FmjEnginePrepare() == 1);
 
@@ -109,6 +116,10 @@ int main(void) {
   assert(FmjEngineGetWideMapState(&wide_map) == 1);
   assert((wide_map.overlay_mask[11 * 20 + 1] & 0x08U) != 0);
   FmjEngineNotifyWideMapEnd();
+  FmjEngineNotifyWideMapClear();
+  assert(wide_map_clear_count == 1);
+  assert(FmjEngineGetWideMapState(&wide_map) == 1);
+  assert((wide_map.overlay_mask[11 * 20 + 1] & 0x08U) == 0);
 
   FmjEngineNotifyBattleBegin();
   FmjEngineNotifyBattleBackgroundReady();
@@ -144,6 +155,18 @@ int main(void) {
   assert(SysMemFree(first) == 1);
   assert(SysMemFree(second) == 1);
   assert(SysMemAllocate(0x1300) != NULL);
+
+  /* Returning to the menu must release scene IDs as well as player actors.
+   * Otherwise a subsequent new game stops with NPC_RECBEUSE when its opening
+   * script creates an ID that the previous map left occupied. */
+  SysMemInit(0x2C00, 0x1400);
+  MCU_memory[0x1935] = 0;
+  _0020E969(1);
+  assert(MCU_memory[0x1935] == 0);
+  assert(*(UINT16*)(MCU_memory + 0x19D3 + 2) != 0);
+  _00200942(0x03);
+  assert(MCU_memory[0x1935] == 0);
+  assert(*(UINT16*)(MCU_memory + 0x19D3 + 2) == 0);
 
   SysMemInit(0x2C00, 0x1400);
   assert(_0020EB2D(0) == 1);

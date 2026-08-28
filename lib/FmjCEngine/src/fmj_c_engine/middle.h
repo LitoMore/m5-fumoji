@@ -61,6 +61,7 @@ void SysStopMelody(void);
 void FmjEngineNotifyWideMapBegin(void);
 void FmjEngineNotifyWideMapReady(void);
 void FmjEngineNotifyWideMapEnd(void);
+void FmjEngineNotifyWideMapClear(void);
 void FmjEngineNotifyBattleBegin(void);
 void FmjEngineNotifyBattleBackgroundReady(void);
 void FmjEngineNotifyBattleEnd(void);

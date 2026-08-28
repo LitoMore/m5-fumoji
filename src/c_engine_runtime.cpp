@@ -124,6 +124,7 @@ bool CEngineRuntime::begin(LittleFsByteSource& game,
   host.wide_map_begin = wideMapBegin;
   host.wide_map_ready = wideMapReady;
   host.wide_map_end = wideMapEnd;
+  host.wide_map_clear = wideMapClear;
   host.battle_begin = battleBegin;
   host.battle_end = battleEnd;
   host.play_melody = playMelody;
@@ -406,6 +407,13 @@ void CEngineRuntime::wideMapEnd(void* context) {
   // scaled 160x96 framebuffer.  Battle rendering takes precedence as soon as
   // battleBegin() runs, and the next wideMapReady() replaces this frame
   // atomically with the new map.
+  runtime->dirty_ = true;
+}
+
+void CEngineRuntime::wideMapClear(void* context) {
+  auto* runtime = static_cast<CEngineRuntime*>(context);
+  runtime->wideMapRendering_ = false;
+  runtime->wideMapReady_ = false;
   runtime->dirty_ = true;
 }
 

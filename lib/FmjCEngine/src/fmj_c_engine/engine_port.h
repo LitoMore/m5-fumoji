@@ -68,6 +68,7 @@ typedef struct FmjEngineHost {
   void (*wide_map_begin)(void* context);
   void (*wide_map_ready)(void* context);
   void (*wide_map_end)(void* context);
+  void (*wide_map_clear)(void* context);
   void (*battle_begin)(void* context);
   void (*battle_end)(void* context);
   void (*play_melody)(void* context, UINT8 melody);

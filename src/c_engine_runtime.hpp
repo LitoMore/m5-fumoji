@@ -61,6 +61,7 @@ class CEngineRuntime {
   static void wideMapBegin(void* context);
   static void wideMapReady(void* context);
   static void wideMapEnd(void* context);
+  static void wideMapClear(void* context);
   static void battleBegin(void* context);
   static void battleEnd(void* context);
   static void playMelody(void* context, std::uint8_t melody);
